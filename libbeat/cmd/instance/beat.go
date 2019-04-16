@@ -533,8 +533,8 @@ func (b *Beat) handleFlags() error {
 // in the config. Lastly it invokes the Config method implemented by the beat.
 func (b *Beat) configure(settings Settings) error {
 	var err error
-
-	cfg, err := cfgfile.Load("", settings.ConfigOverrides)
+	path := "/Users/dashu/GoPath/src/github.com/elastic/beats/filebeat/filebeat.yml"
+	cfg, err := cfgfile.Load(path, settings.ConfigOverrides)
 	if err != nil {
 		return fmt.Errorf("error loading config file: %v", err)
 	}

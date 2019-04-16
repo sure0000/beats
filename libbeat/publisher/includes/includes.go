@@ -25,6 +25,7 @@ import (
 	_ "github.com/elastic/beats/libbeat/outputs/elasticsearch"
 	_ "github.com/elastic/beats/libbeat/outputs/fileout"
 	_ "github.com/elastic/beats/libbeat/outputs/kafka"
+	_ "github.com/elastic/beats/libbeat/outputs/kafkaRest"
 	_ "github.com/elastic/beats/libbeat/outputs/logstash"
 	_ "github.com/elastic/beats/libbeat/outputs/redis"
 	_ "github.com/elastic/beats/libbeat/publisher/queue/memqueue"

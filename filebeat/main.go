@@ -18,9 +18,8 @@
 package main
 
 import (
-	"os"
-
 	"github.com/elastic/beats/filebeat/cmd"
+	"os"
 )
 
 // The basic model of execution:
