@@ -1,14 +1,21 @@
 package kafkaRest
 
 import (
+	"crypto/tls"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"github.com/elastic/beats/libbeat/logp"
 	"github.com/elastic/beats/libbeat/outputs"
 	"github.com/elastic/beats/libbeat/outputs/outil"
 	"github.com/elastic/beats/libbeat/outputs/transport"
 	"github.com/elastic/beats/libbeat/publisher"
 	"github.com/gofrs/uuid"
+	"io"
+	"log"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 )
@@ -36,6 +43,7 @@ type ClientSettings struct {
 	Timeout            time.Duration
 	CompressionLevel   int
 	Observer           outputs.Observer
+	method             string
 }
 
 // Connection manages the connection for a given client.
@@ -48,17 +56,17 @@ type Connection struct {
 	http              *http.Client
 	onConnectCallback func() error
 	version           string
+	method            string
 }
 
-// Client is an elasticsearch client.
+// Client is an kafka rest client.
 type Client struct {
 	Connection
 	tlsConfig *transport.TLSConfig
-
-	topic    string
-	pipeline *outil.Selector
-	params   map[string]string
-	timeout  time.Duration
+	topic     string
+	pipeline  *outil.Selector
+	params    map[string]string
+	timeout   time.Duration
 
 	// buffered json response reader
 	//json jsonReader
@@ -74,33 +82,8 @@ func NewClient(
 	s ClientSettings,
 	onConnect *callbacksRegistry,
 ) (*Client, error) {
-	proxy := http.ProxyFromEnvironment
-	if s.Proxy != nil {
-		proxy = http.ProxyURL(s.Proxy)
-	}
-
-	pipeline := s.Pipeline
-	if pipeline != nil && pipeline.IsEmpty() {
-		pipeline = nil
-	}
-
-	// TODO: add socks5 proxy support
-	var dialer, tlsDialer transport.Dialer
-	var err error
-
-	dialer = transport.NetDialer(s.Timeout)
-	tlsDialer, err = transport.TLSDialer(dialer, s.TLS, s.Timeout)
-	if err != nil {
-		return nil, err
-	}
-
-	if st := s.Observer; st != nil {
-		dialer = transport.StatsDialer(dialer, st)
-		tlsDialer = transport.StatsDialer(tlsDialer, st)
-	}
-
-	params := s.Parameters
-
+	//var dialer, tlsDialer transport.Dialer
+	//var encoder bodyEncoder
 	client := &Client{
 		Connection: Connection{
 			URL:      s.URL,
@@ -109,17 +92,16 @@ func NewClient(
 			Headers:  s.Headers,
 			http: &http.Client{
 				Transport: &http.Transport{
-					Dial:    dialer.Dial,
-					DialTLS: tlsDialer.Dial,
-					Proxy:   proxy,
+					//Dial:    dialer.Dial,
+					//DialTLS: tlsDialer.Dial,
 				},
 				Timeout: s.Timeout,
 			},
+			method: s.method,
+			//encoder: encoder,
 		},
 		tlsConfig: s.TLS,
 		topic:     s.Topic,
-		pipeline:  pipeline,
-		params:    params,
 		timeout:   s.Timeout,
 		proxyURL:  s.Proxy,
 		observer:  s.Observer,
@@ -180,13 +162,92 @@ func (client *Client) Publish(batch publisher.Batch) error {
 	return err
 }
 
+func dataEncode(
+	data []publisher.Event,
+) []io.Reader {
+	//okEvents := list.New()
+	//okEvents := data[:0]
+	var okEvents []io.Reader
+	var message string
+	for i := range data {
+		event := &data[i].Content
+		byteEvent, err := json.Marshal(event)
+		if err != nil {
+			logp.Err("Failed to encode event: %s", err)
+			logp.Debug("kafka rest", "Failed event: %v", event)
+			continue
+		}
+		if i == (len(data) - 1) {
+			message = message + `{"value":` + string(byteEvent) + `}`
+		} else {
+			message = message + `{"value":` + string(byteEvent) + `},`
+		}
+
+	}
+	message = `{"records":[` + message + `]}`
+	jsonEvent := strings.NewReader(message)
+	okEvents = append(okEvents, jsonEvent)
+	return okEvents
+}
+
 // PublishEvents sends all events to elasticsearch. On error a slice with all
 // events not published or confirmed to be processed by elasticsearch will be
 // returned. The input slice backing memory will be reused by return the value.
 func (client *Client) publishEvents(
 	data []publisher.Event,
 ) ([]publisher.Event, error) {
+
+	//begin := time.Now()
+	st := client.observer
+	//[]byte(data[0])
+	if st != nil {
+		st.NewBatch(len(data))
+	}
+
+	if len(data) == 0 {
+		return nil, nil
+	}
+	okevent := dataEncode(data)
+	for i := range okevent {
+		tem := okevent[i]
+		err := sendRequests(tem, client.URL, client.Username, client.Password)
+		if err != nil {
+			fmt.Errorf("publish event fail: %v", err)
+		}
+	}
+
 	return nil, nil
+}
+
+func sendRequests(
+	recodes io.Reader,
+	url string,
+	username string,
+	password string) error {
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{
+		Transport: tr,
+	}
+	req, err := http.NewRequest("POST", url, recodes)
+
+	if err != nil {
+		fmt.Println("req fail")
+	}
+	tem := username + ":" + password
+	Authorization := []byte(tem)
+	str := "Basic " + base64.StdEncoding.EncodeToString(Authorization)
+	req.Header.Add("Authorization", str)
+	req.Header.Add("Content-Type", "application/vnd.kafka.json.v2+json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Fatal("kafka rest 请求失败:", err)
+		return err
+	}
+	resp.Body.Close()
+	return nil
 }
 
 func (client *Client) String() string {
@@ -203,7 +264,7 @@ func (conn *Connection) Connect() error {
 
 	err = conn.onConnectCallback()
 	if err != nil {
-		return fmt.Errorf("Connection marked as failed because the onConnect callback failed: %v", err)
+		return fmt.Errorf("Connection marked as failed because the onConnect callback failed:", err)
 	}
 	return nil
 }

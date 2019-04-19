@@ -147,11 +147,16 @@ setup.kibana:
 #-------------------------- Elasticsearch output ------------------------------
 output.kafkaRest:
   # Array of hosts to connect to.
-  hosts: ["localhost:9200"]
-  username: xyc
-  password: xyc
-#  topic: xyc
-
+  hosts: ["cdh1:55130"]
+  username: test
+  password: test
+  protocol: "https"
+  path: /topics/test.test_json
+#output.elasticsearch:
+#  hosts: ["es1:9200"]
+#  username: elastic
+#  password: elastic
+#  index: "xyc_test-%{+yyyy.MM.dd}"
   # Optional protocol and basic auth credentials.
   #protocol: "https"
   #username: "elastic"
